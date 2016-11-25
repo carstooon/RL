@@ -2,13 +2,15 @@ import numpy as np
 import tensorflow as tf
 import gym
 import random
+import matplotlib
+matplotlib.use('PDF') # save as pdf
+import matplotlib.pyplot as plt
 from collections import deque
-env = gym.make('CartPole-v0')
-# env.monitor.start("test", force=True)
 
+env = gym.make('CartPole-v0')
 
 ### CONFIGURATION ###
-TIMESTEPS = 1000
+TIMESTEPS = 10000
 EPISODES = 1000
 
 ACTIONS = env.action_space.n
@@ -18,14 +20,14 @@ HIDDEN_NEURONS1 = 20
 HIDDEN_NEURONS2 = 30
 LEARNING_RATE = 0.01
 DECAY_RATE = 0.1
-BATCH = 16
+BATCH = 32
 
-GAMMA = 0.90
-OBSERVE = 128
+GAMMA = 0.99
+OBSERVE = 500
 INITIAL_EPSILON = 1.0
-FINAL_EPSILON = 0.05
-EXPLORE = 500.
-REPLAY_MEMORY = 590000
+FINAL_EPSILON = 0.1
+EXPLORE = 50.
+REPLAY_MEMORY = 10000
 K = 1 # only select an action every K frames
 
 
@@ -80,72 +82,62 @@ with tf.name_scope('Model'):
 
     # pred = out_layer2
     pred = out_layer1
-    print("pred.get_shape()" , pred.get_shape)
-    print("a.get_shape()" , a.get_shape)
-    print("y_.get_shape()" , y_.get_shape)
 
     readout_action = tf.reduce_sum(tf.mul(pred, a), reduction_indices = 1)
-    cost = tf.reduce_mean(tf.square(y_ - readout_action))
-
+    cost = tf.contrib.losses.mean_squared_error(y_, readout_action)
     tf.scalar_summary('loss', cost)
 
     with tf.name_scope('Optimizer'):
         optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE).minimize(cost)
 
 
+### Preparation for TRAINING #####
 
 # Store in replay memory D
 D = deque()
 
+timestepsPerEpisode = [[],[]] # used for plotting later
 
 init = tf.initialize_all_variables()
 
 with tf.Session() as sess:
     sess.run(init)
     epsilon = INITIAL_EPSILON
-    
+    t_total = 0
     for i_episode in range(EPISODES):
         observation = env.reset()
         s_t = observation # Store first state in memory D
+
         for t in range(TIMESTEPS):
             # env.render()
 
-            readout_t = pred.eval(feed_dict = {x : [s_t]})[0]
-
-            # print("readout_t = ", readout_t)
-            action_index = 0
-            a_t = np.zeros([ACTIONS])
-            if random.random() <= epsilon or t<=OBSERVE:
+            action = np.zeros([ACTIONS])
+            if random.random() <= epsilon or t_total<=OBSERVE:
                 action_index = random.randrange(ACTIONS)
-                a_t[action_index] = 1
+                action[action_index] = 1
             else:
+                readout_t = pred.eval(feed_dict = {x : [s_t]})[0]
                 action_index = np.argmax(readout_t)
-                # print("action_index = ", action_index)
-                a_t[action_index] = 1
+                action[action_index] = 1
 
-            if epsilon > FINAL_EPSILON and t > OBSERVE:
-                epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
+            # Get new state and append to buffer
+            observation, reward, done, info = env.step(action_index)
+            D.append((s_t, action, reward, observation, done))
+            if len(D) > REPLAY_MEMORY:
+                D.popleft()
 
-            # print("epsilon = {}".format(epsilon))
-            for i in range(K):
-                observation, reward, done, info = env.step(action_index)
-                s_t1 = observation
-                r_t = reward
-                D.append((s_t, a_t, r_t, s_t1, done))
-                if len(D) > REPLAY_MEMORY:
-                    D.popleft()
-            if t > OBSERVE:
+            if t_total > OBSERVE:
                 minibatch = random.sample(D, BATCH)
 
-                s_j_batch = [d[0] for d in minibatch]
-                a_batch = [d[1] for d in minibatch]
-                r_batch = [d[2] for d in minibatch]
+                s_j_batch  = [d[0] for d in minibatch]
+                a_batch    = [d[1] for d in minibatch]
+                r_batch    = [d[2] for d in minibatch]
                 s_j1_batch = [d[3] for d in minibatch]
 
                 y_batch = []
+                # get prediction for new time frame
                 readout_j1_batch = pred.eval(feed_dict = {x : s_j1_batch})
-
-                for i in range(0, len(minibatch)):
+                for i in range(BATCH):
                     # if terminal only equals reward
                     if minibatch[i][4]:
                         y_batch.append(r_batch[i])
@@ -159,20 +151,30 @@ with tf.Session() as sess:
                     x  : s_j_batch})
                 # print("Cost = ", c)
 
-            s_t = s_t1
+            s_t = observation
+            t_total += 1
 
-            # print info
-            state = ""
-            if t <= OBSERVE:
-                state = "observe"
-            elif t > OBSERVE and t <= OBSERVE + EXPLORE:
-                state = "explore"
-            else:
-                state = "train"
-
-            # print(state)
-            if done:
+            if done or t == TIMESTEPS-1:
                 print("Episode {} finished after {} timesteps".format(i_episode, t+1))
                 break
+            ## END OF FRAME
+        #Adjust epsilon for next batch
+        if epsilon > FINAL_EPSILON and t_total > OBSERVE:
+            epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
 
+        timestepsPerEpisode[0].append(i_episode)
+        timestepsPerEpisode[1].append(t+1)
+        print("eps", epsilon, "")
+        # END OF EPISODE
+
+## Plotting stuff
+plt.clf()
+fig = plt.figure(0)
+ax1 = fig.add_subplot(111)
+ax1.plot(timestepsPerEpisode[0], timestepsPerEpisode[1], color='blue')
+# plt.axis([-10., 10., -10., 10.])
+plt.title('cartPole-v0')
+plt.xlabel('episode')
+plt.ylabel('steps')
+plt.savefig('steps')
 # env.monitor.close()
