@@ -7,29 +7,32 @@ matplotlib.use('PDF') # save as pdf
 import matplotlib.pyplot as plt
 from collections import deque
 
-env = gym.make('CartPole-v0')
+# env = gym.make('CartPole-v0')
 # env = gym.make('CartPole-v1')
-# env = gym.make('Acrobot-v1')
+env = gym.make('Acrobot-v1')
+# env = gym.make('MountainCar-v0')
 
 ### CONFIGURATION ###
-TIMESTEPS = 2000
-EPISODES = 500
+RENDER = False
+
+TIMESTEPS = 10000
+EPISODES = 1000
 
 ACTIONS = env.action_space.n
 INPUT_DIMENSION = env.observation_space.shape[0]
 OUTPUT_DIMENSION = ACTIONS
 HIDDEN_NEURONS1 = 16
 HIDDEN_NEURONS2 = 16
-LEARNING_RATE = 0.1
-DECAY_RATE = 0.1
+LEARNING_RATE = 0.01
+DECAY_RATE = 0.01
 BATCH = 64
 
 GAMMA = 0.99
-OBSERVE = 500
-EXPLORE = 50.
+OBSERVE = 1000
+EXPLORE = 100.
 INITIAL_EPSILON = 1.0
-FINAL_EPSILON = 0.01
-REPLAY_MEMORY = 1000
+FINAL_EPSILON = 0.1
+REPLAY_MEMORY = 100000
 
 ### MODEL ###
 x = tf.placeholder("float", [None, INPUT_DIMENSION], "input")
@@ -59,7 +62,8 @@ optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE).minimize(cost)
 # Store in replay memory D
 D = deque()
 
-timestepsPerEpisode = [[],[]] # used for plotting later
+rewardPerEpisode = [[],[]] # used for plotting later
+lossPerTimeframe = [[],[]] # used for plotting later
 
 init = tf.initialize_all_variables()
 
@@ -72,8 +76,9 @@ with tf.Session() as sess:
         s_t = observation # Store first state in memory D
         sum_reward = 0
         for t in range(TIMESTEPS):
-            # if t % BATCH == 0:
-            #     env.render()
+            if RENDER:
+                env.render()
+            loss = 0
 
             action = np.zeros([ACTIONS])
             if random.random() <= epsilon or t_total<=OBSERVE:
@@ -112,13 +117,16 @@ with tf.Session() as sess:
                 # print("a :             ", a.eval(feed_dict={a: a_batch}))
                 # print("readout_action: ", readout_action.eval(feed_dict = {x: s_j_batch, a: a_batch}))
                 # perform gradient step
-                _c, c = sess.run([optimizer, cost], feed_dict = {
+                _c, loss = sess.run([optimizer, cost], feed_dict = {
                     y_ : y_batch,
                     a  : a_batch,
                     x  : s_j_batch})
                 # print("Cost = ", c)
+                lossPerTimeframe[0].append(t_total)
+                lossPerTimeframe[1].append(loss)
 
             s_t = observation
+
             t_total += 1
 
             if done or t == TIMESTEPS-1:
@@ -129,8 +137,8 @@ with tf.Session() as sess:
         if epsilon > FINAL_EPSILON and t_total > OBSERVE:
             epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
 
-        timestepsPerEpisode[0].append(i_episode)
-        timestepsPerEpisode[1].append(sum_reward)
+        rewardPerEpisode[0].append(i_episode)
+        rewardPerEpisode[1].append(sum_reward)
         # print("eps", epsilon, "reward", sum_reward)
         # END OF EPISODE
 
@@ -138,10 +146,21 @@ with tf.Session() as sess:
 plt.clf()
 fig = plt.figure(0)
 ax1 = fig.add_subplot(111)
-ax1.plot(timestepsPerEpisode[0], timestepsPerEpisode[1], color='blue')
-# plt.axis([-10., 10., -10., 10.])
+ax1.plot(rewardPerEpisode[0], rewardPerEpisode[1], color='blue')
+plt.axis([0., EPISODES, 0., 500.])
 plt.title('cartPole-v0')
 plt.xlabel('episode')
 plt.ylabel('reward')
 plt.savefig('reward')
+
+plt.clf()
+fig = plt.figure(1)
+ax1 = fig.add_subplot(111)
+ax1.semilogy(lossPerTimeframe[0], lossPerTimeframe[1], color='red')
+# ax1.loglog(lossPerTimeframe[0], lossPerTimeframe[1], color='red')
+plt.xlim(lossPerTimeframe[0][0], TIMESTEPS)
+plt.title('cartPole-v0')
+plt.xlabel('timeframe')
+plt.ylabel('loss')
+plt.savefig('loss')
 # env.monitor.close()
