@@ -1,13 +1,16 @@
 import random
 import argparse
+from collections import deque
+
+import nn
+
 import numpy as np
 import tensorflow as tf
-import nn
+
 import gym
 import matplotlib
 matplotlib.use('PDF') # save as pdf
 import matplotlib.pyplot as plt
-from collections import deque
 from scipy.interpolate import spline
 
 #####################################
@@ -15,8 +18,8 @@ from scipy.interpolate import spline
 parser = argparse.ArgumentParser(description='Reinforcement Learning')
 parser.add_argument('-N', '--episodes', type=int, default=500, required=False,
                    help='Number of episodes to run training')
-parser.add_argument('-R', '--render', type=bool, default=False, required=False,
-                   help='Show the animation')
+parser.add_argument('-R', '--render', type=int, default=1, required=False,
+                   help='Show the animation in every r-th episode')
 args = parser.parse_args()
 
 print("Number of Episodes: ", args.episodes)
@@ -28,31 +31,32 @@ print("Rendering: ", args.render)
 ## GYM CONFIG
 RENDER = args.render
 EPISODES = args.episodes
-TIMESTEPS = 10000
+TIMESTEPS = 1000
 ENVIRONMENT = 'CartPole-v0'
 # ENVIRONMENT = 'CartPole-v1'
 # ENVIRONMENT = 'Acrobot-v1'
 # ENVIRONMENT = 'MountainCar-v0'
+# ENVIRONMENT = 'LunarLander-v2'
 env = gym.make(ENVIRONMENT)
 ACTIONS = env.action_space.n
 
 ## Neural Network Config
 INPUT_DIMENSION = env.observation_space.shape[0]
 OUTPUT_DIMENSION = ACTIONS
-HIDDEN_NEURONS1 = 64
-HIDDEN_NEURONS2 = 16
+HIDDEN_NEURONS1 = 32
+HIDDEN_NEURONS2 = 256
 LEARNING_RATE = 0.01
 DECAY_RATE = 0.01
 BATCH_SIZE = 64
 
 ## Reinforcement learning
-GAMMA = 0.99
-OBSERVE = 500
-EXPLORE = 100.
+GAMMA = 0.99 # learning discount
+OBSERVE = 100 # timesteps
+EXPLORE = 50. # episodes to go from INITIAL_EPSILON to FINAL_EPSILON
 INITIAL_EPSILON = 1.0
 FINAL_EPSILON = 0.01
 REPLAY_MEMORY = 100000
-UPDATE_TARGET_FREQUENCY = 1000
+UPDATE_TARGET_FREQUENCY = 1000 # after how many timesteps the target network gets updated
 
 ## Plotting
 SMOOTH = 2
@@ -63,6 +67,8 @@ x = tf.placeholder("float", [None, INPUT_DIMENSION], "input")
 a = tf.placeholder("float", [None, ACTIONS], "actions")
 y_ = tf.placeholder("float", [None], "output")
 
+# pred   = nn.TwoLayerNetwork(x, OUTPUT_DIMENSION, HIDDEN_NEURONS1, HIDDEN_NEURONS2)
+# target = nn.TwoLayerNetwork(x, OUTPUT_DIMENSION, HIDDEN_NEURONS1, HIDDEN_NEURONS2)
 pred   = nn.OneLayerNetwork(x, OUTPUT_DIMENSION, HIDDEN_NEURONS1)
 target = nn.OneLayerNetwork(x, OUTPUT_DIMENSION, HIDDEN_NEURONS1)
 
@@ -83,16 +89,22 @@ lossPerTimeframe = [[],[]] # used for plotting later
 
 init = tf.initialize_all_variables()
 
+print("Number of input dimensions: {}".format(INPUT_DIMENSION))
+print("Number of actions: {}".format(ACTIONS))
+
+t_total = 0
 with tf.Session() as sess:
     sess.run(init)
     epsilon = INITIAL_EPSILON
-    t_total = 0
     for i_episode in range(EPISODES): #
         observation = env.reset()
         s_t = observation # Store first state in memory D
         sum_reward = 0
+        episode_render = False
+        if i_episode % RENDER == 0:
+            episode_render = True
         for t in range(TIMESTEPS):
-            if RENDER:
+            if episode_render:
                 env.render()
             loss = 0
 
@@ -106,6 +118,8 @@ with tf.Session() as sess:
 
             # Get new state and append to buffer
             observation, reward, done, info = env.step(action_index)
+            if ENVIRONMENT == 'LunarLander-v2':
+                reward -= 1 ## time malus
             D.append((s_t, action, reward, observation, done))
             sum_reward += reward
 
@@ -149,7 +163,7 @@ with tf.Session() as sess:
                 target = pred
 
             if done or t == TIMESTEPS-1:
-                print("Episode {} finished after {} timesteps".format(i_episode, t+1))
+                print("Episode {} finished after {} timesteps with reward {}".format(i_episode, t+1, sum_reward))
                 break
             ## END OF TIMEFRAME
         #Adjust epsilon for next batch
@@ -162,6 +176,35 @@ with tf.Session() as sess:
         # print("eps", epsilon, "reward", sum_reward)
         # END OF EPISODE
 
+        if i_episode % 100 == 0 and i_episode != 0 and len(lossPerTimeframe[0]) > 0:
+            ## Plotting stuff
+            plt.clf()
+
+            xnew = np.linspace(np.array(rewardPerEpisode[0]).min(),np.array(rewardPerEpisode[0]).max(),float(EPISODES)/SMOOTH)
+            power_smooth = spline(rewardPerEpisode[0],rewardPerEpisode[1],xnew)
+            fig = plt.figure(0)
+            ax1 = fig.add_subplot(111)
+            ax1.plot(xnew, power_smooth, color='blue')
+            plt.xlim(0, EPISODES)
+            # plt.axis([0., EPISODES, 0., 500.])
+            plt.title(ENVIRONMENT)
+            plt.xlabel('episode')
+            plt.ylabel('reward')
+            plt.savefig(ENVIRONMENT + '_reward')
+
+            plt.clf()
+            fig = plt.figure(1)
+            ax1 = fig.add_subplot(111)
+            ax1.semilogy(lossPerTimeframe[0], lossPerTimeframe[1], color='red')
+            # ax1.loglog(lossPerTimeframe[0], lossPerTimeframe[1], color='red')
+            # print(lossPerTimeframe[0])
+            plt.xlim(lossPerTimeframe[0][0], lossPerTimeframe[0][-1])
+            plt.title(ENVIRONMENT)
+            plt.xlabel('timeframe')
+            plt.ylabel('loss')
+            plt.savefig(ENVIRONMENT + '_loss')
+            # env.monitor.close()
+
 ## Plotting stuff
 plt.clf()
 
@@ -170,7 +213,8 @@ power_smooth = spline(rewardPerEpisode[0],rewardPerEpisode[1],xnew)
 fig = plt.figure(0)
 ax1 = fig.add_subplot(111)
 ax1.plot(xnew, power_smooth, color='blue')
-plt.axis([0., EPISODES, 0., 500.])
+plt.xlim(0, EPISODES)
+# plt.axis([0., EPISODES, 0., 500.])
 plt.title(ENVIRONMENT)
 plt.xlabel('episode')
 plt.ylabel('reward')
@@ -181,7 +225,8 @@ fig = plt.figure(1)
 ax1 = fig.add_subplot(111)
 ax1.semilogy(lossPerTimeframe[0], lossPerTimeframe[1], color='red')
 # ax1.loglog(lossPerTimeframe[0], lossPerTimeframe[1], color='red')
-plt.xlim(lossPerTimeframe[0][0], TIMESTEPS)
+# print(lossPerTimeframe[0])
+plt.xlim(lossPerTimeframe[0][0], lossPerTimeframe[0][-1])
 plt.title(ENVIRONMENT)
 plt.xlabel('timeframe')
 plt.ylabel('loss')
